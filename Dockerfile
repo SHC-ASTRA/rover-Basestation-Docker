@@ -7,13 +7,6 @@ FROM ros:humble-ros-core-jammy
 SHELL ["/bin/bash", "-c"]
 
 ######################
-# WORK FILES
-######################
-
-WORKDIR $HOME
-COPY ./ ./
-
-######################
 # ROS2 Humble Install
 ######################
 
