@@ -75,18 +75,14 @@ RUN apt install -y \
 RUN npm install -g corepack
 RUN corepack enable
 
-# Install python and pip
-# we need python-is-python3 because poetry invokes python3 with `python`
-# we also need python's development headers to build wheels
+# Install python and venv
+# we need python's development headers to build wheels
 RUN apt install -y \
     python3 \
-    python3-pip \
     python-is-python3 \
     python3-dev \
-    python3-poetry
+    python3-venv
 
 # Install extra required python packages that pip can't install
-# dotenv is required for our flask config
 RUN apt install -y \
-    python3-dotenv \
     ros-humble-cv-bridge
