@@ -1,92 +1,110 @@
-# ROS image, ros-humble-ros-core package installed
-# on Ubuntu Jammy
+# using image with ros humble already installed
 # https://hub.docker.com/_/ros/
 FROM ros:humble-ros-core-jammy
 
 # change shell to bash
 SHELL ["/bin/bash", "-c"]
 
-######################
-# ROS2 Humble Install
-######################
 
-# Using the ROS docker image
-# It is no longer necessary to install ROS2
-# or source.
-# The ROS2 image makes use of an entrypoint script
+###########################
+# INSTALL SYSTEM PACKAGES #
+###########################
 
-# See the dockerfile here:
-# https://github.com/osrf/docker_images/tree/20e3ba685bb353a3c00be9ba01c1b7a6823c9472/ros/humble/ubuntu/jammy 
+# add standard packages
+RUN yes | unminimize
+RUN apt-get update && apt-get -y upgrade
+RUN apt-get update \
+    && apt-get install -y software-properties-common \
+    && add-apt-repository -y universe
 
-#####################
-# Packages install
-#####################
+# add development tools (this is a dev container)
+RUN apt-get update \
+    && apt-get install -y curl make build-essential \
+    cmake git vim sudo g++ man-db bash-completion \
+    jq unzip gnupg2 ca-certificates
 
-# Update packages repositories
-RUN apt update
-# Add standard packages
-RUN apt install -y software-properties-common
-RUN add-apt-repository -y universe
-# Update the repositories again
-RUN apt update
+# install docker
+RUN apt-get update \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli \
+    && groupadd docker
 
-#####################
-# Install packages
-#####################
+# add colcon
+# see: <https://colcon.readthedocs.io/en/released/user/installation.html>
+RUN echo "deb [arch=amd64,arm64] http://repo.ros2.org/ubuntu/main `lsb_release -cs` main" > /etc/apt/sources.list.d/ros2-latest.list \
+    && curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add - \
+    && apt-get update \
+    && apt-get install -y python3-colcon-common-extensions
 
-# Add standard packages
-RUN add-apt-repository -y universe
-# Update packages repositories
-RUN apt update
-# Repository keys & certificates
-RUN apt install -y ca-certificates gnupg
-RUN mkdir -p /etc/apt/keyrings
-# common software properties, curl, make, build-essentials, cmake
-RUN apt install -y \
-    software-properties-common \
-    curl \
-    make \
-    build-essential \
-    cmake
+# add ros-dev-tools for development toolchain
+RUN apt-get update \
+    && apt-get install -y ros-dev-tools ros-humble-demo-nodes-cpp ros-humble-rmw-cyclonedds-cpp
 
-# Add colcon repository
-# https://colcon.readthedocs.io/en/released/user/installation.html
-RUN echo "deb [arch=amd64,arm64] http://repo.ros2.org/ubuntu/main `lsb_release -cs` main" > /etc/apt/sources.list.d/ros2-latest.list
-RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+# install python build requirements for pyenv
+# see: <https://github.com/pyenv/pyenv/wiki#suggested-build-environment>
+RUN apt-get update \
+    && apt-get install -y \
+    libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
+    libsqlite3-dev libncursesw5-dev xz-utils tk-dev libxml2-dev \
+    libxmlsec1-dev libffi-dev liblzma-dev \
+    debian-keyring debian-archive-keyring apt-transport-https
 
-# Add nodejs repository
-# Specifically the node_18.x repo, for the supported rclnodejs version
-RUN echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list
-# Add nodejs repo key
-RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+# install starship (better bash prompt)
+RUN curl -sS https://starship.rs/install.sh | sudo sh -s -- -y
 
-########################
-# Update repositories
-########################
+# set up astra user
+RUN useradd -m -U astra \
+    && usermod -a -G sudo astra \
+    && usermod -a -G docker astra \
+    && chsh -s /usr/bin/bash astra \
+    && passwd -d astra
 
-RUN apt update
 
-# install runtimes
-RUN apt install -y \
-    python3-colcon-common-extensions \
-    nodejs
+###########################
+# SWITCH TO NON-ROOT USER #
+###########################
 
-# Enable yarn
-RUN npm install -g corepack
-RUN corepack enable
+USER astra
 
-# Install python and pip
-# we need python-is-python3 because poetry invokes python3 with `python`
-# we also need python's development headers to build wheels
-RUN apt install -y \
-    python3 \
-    python3-pip \
-    python-is-python3 \
-    python3-dev \
-    python3-poetry
+# python stuff first for better caching (it takes eons)
+# install pyenv
+ENV PYENV_ROOT="/home/astra/.pyenv"
+RUN curl https://pyenv.run | bash
 
-# Install extra required python packages that pip can't install
-# dotenv is required for our flask config
-RUN apt install -y \
-    python3-dotenv \
-    ros-humble-cv-bridge
+# install python
+ENV PY_VERSION=3.10
+RUN $PYENV_ROOT/bin/pyenv install $PY_VERSION -v \
+    && $PYENV_ROOT/bin/pyenv global $PY_VERSION
+
+# install poetry
+RUN $PYENV_ROOT/bin/pyenv exec pip install -U pipx \
+    && $PYENV_ROOT/bin/pyenv exec python -m pipx install poetry
+
+# install required packages for colcon builds
+RUN $PYENV_ROOT/bin/pyenv exec pip install -U \
+    'empy>=3.3.4,<3.4.0' \
+    'catkin-pkg>=1.0.0,<1.1.0' \
+    'lark>=1.2.2,<1.3.0' \
+    'numpy>=2.2.4,<2.3.0'
+
+# install nvm
+# node version manager
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+
+# install specific node version and npm
+ENV NODE_VERSION=20
+RUN source ~/.nvm/nvm.sh \
+    && nvm install $NODE_VERSION --latest-npm \
+    && nvm alias default $NODE_VERSION \
+    && nvm use default
+
+# set up bashrc
+# link the repository .bashrc over the default Ubuntu
+RUN rm ~/.bashrc && ln -s /release/.devcontainer/.bashrc ~/.bashrc
+
